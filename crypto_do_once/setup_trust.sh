@@ -34,9 +34,9 @@ SERVER_COUNTRY="BE"
 # Cleanup existing files
 ###########################################
 
-rm -f "$ROOT_CA_KEYSTORE" "$SERVER_KEYSTORE"
-rm -f cauth_truststore.p12 sp_truststore.p12 ho_truststore.p12 co_truststore.p12
-rm -f root_ca.crt server.csr server.crt
+rm -rf "$ROOT_CA_KEYSTORE" "$SERVER_KEYSTORE"
+rm -rf cauth_truststore.p12 sp_truststore.p12 ho_truststore.p12 co_truststore.p12
+rm -rf root_ca.crt server.csr server.crt
 
 ###########################################
 # 1. Create Root CA keystore + self-signed certificate
