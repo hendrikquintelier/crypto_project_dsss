@@ -1,5 +1,5 @@
 # Use Eclipse Temurin JDK 17 (OpenJDK replacement)
-FROM eclipse-temurin:17-jdk
+FROM eclipse-temurin:21-jdk
 
 # Install Maven
 RUN apt-get update && \

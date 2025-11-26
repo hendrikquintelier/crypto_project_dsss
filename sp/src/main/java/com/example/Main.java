@@ -5,9 +5,19 @@ import java.io.*;
 import javax.naming.ldap.LdapName;
 import javax.naming.ldap.Rdn;
 import javax.net.ssl.*;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.*;
+import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+
+import javax.net.ssl.SSLException;
+import javax.net.ssl.TrustManagerFactory;
 import java.util.Date;
+import java.util.Enumeration;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,8 +40,8 @@ public class Main {
     private static final String TRUSTSTORE_PASSWORD = "trustpassword";
     
     // Local storage for SP's credentials
-    private static final String SP_KEYSTORE_PATH = "./sp_keystore.p12";
-    private static final String SP_KEYSTORE_PASSWORD = "sp_password";
+    private static final String SP_KEYSTORE_PATH = "./keystore.p12";
+    private static final String SP_KEYSTORE_PASSWORD = "serverpassword";
     private static final String SP_KEY_ALIAS = "sp_key";
     
     private static final String HASH_ALGORITHM = "SHA-256";
@@ -123,28 +133,91 @@ public class Main {
      * Enroll with CAuth to get a signed certificate
      */
     private static void enrollWithCAuth() throws Exception {
-        System.out.println("Step 1: Generating RSA key pair...");
+        System.out.println("\nStep 1: Generating key pair...");
         spKeyPair = generateKeyPair();
-        System.out.println("Key pair generated successfully");
-        
-        System.out.println("\nStep 2: Creating Certificate Signing Request (CSR)...");
+
+        System.out.println("Step 2: Building CSR...");
         PKCS10CertificationRequest csr = createCSR(spKeyPair);
-        System.out.println("CSR created successfully");
-        
+
         System.out.println("\nStep 3: Connecting to CAuth server...");
+
+        // DEBUG: show resolved CA host and system ssl props
+        try {
+            System.out.println("CAUTH_HOST = " + CAUTH_HOST + ", CAUTH_PORT = " + CAUTH_PORT);
+            InetAddress addr = InetAddress.getByName(CAUTH_HOST);
+            System.out.println("Resolved CAUTH_HOST to: " + addr.getHostAddress());
+        } catch (Exception e) {
+            System.out.println("Failed to resolve CAUTH_HOST: " + e.getMessage());
+        }
+        System.out.println("javax.net.ssl.trustStore = " + System.getProperty("javax.net.ssl.trustStore"));
+        System.out.println("javax.net.ssl.trustStorePassword = " +
+                (System.getProperty("javax.net.ssl.trustStorePassword") != null ? "<set>" : "<not-set>"));
+
+        // DEBUG: inspect configured truststore file
+        debugTruststore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+
+        System.out.println("Step 3b: Requesting certificate from CAuth...");
         X509Certificate[] certChain = requestCertificateFromCAuth(csr);
+
+        if (certChain == null || certChain.length == 0 || certChain[0] == null) {
+            System.out.println("No certificate has been received, cannot store credentials.");
+            return;
+        }
+
         spCertificate = certChain[0]; // The first cert is always the SP's own
-        if (spCertificate==null)
-            System.out.println("No certificate has been received, creating a fake certificate");
-        else
-            System.out.println("Certificate received from CAuth");
-        
+        System.out.println("Certificate received from CAuth");
+
         System.out.println("\nStep 4: Storing certificate and private key...");
         storeCertificateAndKey(certChain);
         System.out.println("Credentials stored in " + SP_KEYSTORE_PATH);
-        
     }
-    
+
+    // DEBUG helper: load and list truststore contents
+    private static void debugTruststore(String truststorePath, String truststorePassword) {
+        try {
+            Path tsPath = Path.of(truststorePath);
+            if (!Files.exists(tsPath)) {
+                System.out.println("Truststore file not found at: " + tsPath.toAbsolutePath());
+                return;
+            }
+            System.out.println("Truststore file found: " + tsPath.toAbsolutePath() + " (size=" + Files.size(tsPath) + " bytes)");
+
+            KeyStore ts = KeyStore.getInstance("PKCS12");
+            try (FileInputStream fis = new FileInputStream(tsPath.toFile())) {
+                ts.load(fis, truststorePassword != null ? truststorePassword.toCharArray() : null);
+            }
+
+            System.out.println("Loaded truststore, type=" + ts.getType() + ", entryCount=" + ts.size());
+            Enumeration<String> aliases = ts.aliases();
+            while (aliases.hasMoreElements()) {
+                String a = aliases.nextElement();
+                System.out.println(" - alias: " + a + " (trusted=" + ts.isCertificateEntry(a) + ", keyEntry=" + ts.isKeyEntry(a) + ")");
+                if (ts.isCertificateEntry(a) || ts.isKeyEntry(a)) {
+                    Certificate cert = ts.getCertificate(a);
+                    if (cert instanceof java.security.cert.X509Certificate) {
+                        java.security.cert.X509Certificate x = (java.security.cert.X509Certificate) cert;
+                        System.out.println("   subject: " + x.getSubjectX500Principal().getName());
+                        System.out.println("   issuer:  " + x.getIssuerX500Principal().getName());
+                        System.out.println("   serial:  " + x.getSerialNumber());
+                        System.out.println("   valid:   " + x.getNotBefore() + " -> " + x.getNotAfter());
+                    } else if (cert != null) {
+                        System.out.println("   cert class: " + cert.getClass().getName());
+                    } else {
+                        System.out.println("   no certificate available for alias");
+                    }
+                }
+            }
+
+            // show how many trust managers would be created (sanity)
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init(ts);
+            System.out.println("TrustManagerFactory initialized: providers=" + Objects.toString(tmf.getProvider().getName()));
+        } catch (Exception e) {
+            System.out.println("Error inspecting truststore: " + e.getMessage());
+            e.printStackTrace(System.out);
+        }
+    }
+
     /**
      * Generate RSA key pair
      */
@@ -175,49 +248,81 @@ public class Main {
     /**
      * Connect to CAuth and request certificate signing
      */
-    private static X509Certificate[] requestCertificateFromCAuth(PKCS10CertificationRequest csr) 
+    private static X509Certificate[] requestCertificateFromCAuth(PKCS10CertificationRequest csr)
             throws Exception {
-        
+
         KeyStore trustStore = KeyStore.getInstance("PKCS12");
         try (FileInputStream fis = new FileInputStream(TRUSTSTORE_PATH)) {
             trustStore.load(fis, TRUSTSTORE_PASSWORD.toCharArray());
         }
-        
+
         TrustManagerFactory tmf = TrustManagerFactory.getInstance(
             TrustManagerFactory.getDefaultAlgorithm()
         );
         tmf.init(trustStore);
-        
+
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(null, tmf.getTrustManagers(), null);
-        
+
         SSLSocketFactory factory = sslContext.getSocketFactory();
-        SSLSocket socket = (SSLSocket) factory.createSocket(CAUTH_HOST, CAUTH_PORT);
-        
+
+        System.out.println("Attempting TCP connect to " + CAUTH_HOST + ":" + CAUTH_PORT + " (5s timeout)");
+        java.net.Socket raw = new java.net.Socket();
+        raw.connect(new InetSocketAddress(CAUTH_HOST, CAUTH_PORT), 5000);
+        raw.setSoTimeout(15000);
+        System.out.println("TCP connect successful, wrapping TLS socket and starting handshake...");
+
+        SSLSocket socket = (SSLSocket) factory.createSocket(raw, CAUTH_HOST, CAUTH_PORT, true);
+        socket.setSoTimeout(15000);
+
+        try {
+            socket.startHandshake();
+            System.out.println("TLS handshake completed. Peer certificates:");
+            java.security.cert.Certificate[] peerCerts = socket.getSession().getPeerCertificates();
+            for (int i = 0; i < peerCerts.length; i++) {
+                if (peerCerts[i] instanceof java.security.cert.X509Certificate) {
+                    java.security.cert.X509Certificate x = (java.security.cert.X509Certificate) peerCerts[i];
+                    System.out.println("  [" + i + "] subject=" + x.getSubjectX500Principal().getName());
+                    System.out.println("      issuer=" + x.getIssuerX500Principal().getName());
+                } else {
+                    System.out.println("  [" + i + "] cert class=" + peerCerts[i].getClass().getName());
+                }
+            }
+        } catch (SSLException se) {
+            System.out.println("TLS handshake failed: " + se.getMessage());
+            throw se;
+        }
+
         System.out.println("Connected to CAuth at " + CAUTH_HOST + ":" + CAUTH_PORT);
-        
+
         try (PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
-             BufferedReader reader = new BufferedReader(
-                 new InputStreamReader(socket.getInputStream()))) {
-            
+             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+
             JSONObject request = new JSONObject();
             request.put("method", "signCSR");
             request.put("csr", java.util.Base64.getEncoder().encodeToString(csr.getEncoded()));
-            
+
             System.out.println("Sending CSR to CAuth...");
             writer.println(request.toString());
-            
+
+            System.out.println("Waiting for response (read timeout 15s)...");
             String response = reader.readLine();
-            JSONObject jsonResponse = new JSONObject(response);
-            
-            System.out.println("Received response from CAuth");
-            if (jsonResponse.getString("response").equals("Unknown method"))
+            if (response == null) {
+                System.out.println("No response received (reader returned null)");
                 return new X509Certificate[] { null, null };
+            }
+            System.out.println("Received response from CAuth: " + (response.length() > 200 ? response.substring(0,200) + "..." : response));
+            JSONObject jsonResponse = new JSONObject(response);
+
+            if (jsonResponse.optString("response","").equals("Unknown method")) {
+                System.out.println("CAuth responded Unknown method");
+                return new X509Certificate[] { null, null };
+            }
 
             // Parse certificates separately
-            java.security.cert.CertificateFactory cf = 
+            java.security.cert.CertificateFactory cf =
                 java.security.cert.CertificateFactory.getInstance("X.509");
-                    
+
             // Parse the signed certificate
             String certB64 = jsonResponse.getString("certificate");
             byte[] certBytes = java.util.Base64.getDecoder().decode(certB64);
@@ -236,16 +341,16 @@ public class Main {
                 System.out.println("Received CA root certificate from CAuth.");
             }
             System.out.println("Certificate signed by CAuth!");
-                    
+
             if (rootCert != null) {
                 return new X509Certificate[] { spCert, rootCert };
             } else {
                 return new X509Certificate[] { spCert };
             }
-                
-            } finally {
-                socket.close();
-            }
+
+        } finally {
+            try { socket.close(); } catch (Exception ignore) {}
+        }
     }
     
     /**

@@ -43,12 +43,14 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.bouncycastle.pkcs.PKCS10CertificationRequest;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 
 public class Main {
     // NOTE: after you create intermediate.p12, set KEYSTORE_PATH to "./intermediate.p12"
     private static final int PORT = 8443;
-    private static final String KEYSTORE_PATH = "./intermediate.p12";
-    private static final String KEYSTORE_PASSWORD = "interpass";
+    private static final String KEYSTORE_PATH = "./keystore.p12";
+    private static final String KEYSTORE_PASSWORD = "serverpassword";
     private static final String CA_ALIAS = "intermediate"; // alias inside intermediate.p12
     private static final Path SERIAL_FILE = Path.of("./cauth_serial.txt");
     private static final Path ISSUED_LOG = Path.of("./cauth_issued.log");
@@ -253,17 +255,65 @@ public class Main {
                                 writer.write(resp.toString() + "\n");
                                 writer.flush();
                             }
-                            case "enroll", "csr" -> {
-                                String entity = jsonRequest.optString("entity", "unknown");
-                                if (!entity.equals("SP") && !entity.equals("CO") && !entity.equals("HO")) {
+
+                            
+                            case "signCSR" -> {
+                                String b64csr = jsonRequest.optString("csr", null);
+                                if (b64csr == null) {
                                     JSONObject err = new JSONObject();
-                                    err.put("status", "ERROR");
-                                    err.put("reason", "unknown entity type");
+                                    err.put("response", "ERROR");
+                                    err.put("reason", "missing csr");
                                     writer.write(err.toString() + "\n");
                                     writer.flush();
                                     break;
                                 }
 
+                                try {
+                                    byte[] csrBytes = Base64.getDecoder().decode(b64csr);
+                                    PKCS10CertificationRequest csr = new PKCS10CertificationRequest(csrBytes);
+
+                                    // entity is optional here; for now use "SP" or "unknown"
+                                    String entity = jsonRequest.optString("entity", "SP");
+                                    JSONObject metadata = jsonRequest.optJSONObject("metadata");
+
+                                    X509Certificate signed = signCSR(csr, entity, metadata);
+
+                                    // Build response expected by SP:
+                                    //  - "response"
+                                    //  - "certificate"
+                                    //  - "caCertificate" (root)
+                                    JSONObject resp = new JSONObject();
+                                    resp.put("response", "OK");
+                                    resp.put("certificate", Base64.getEncoder().encodeToString(signed.getEncoded()));
+
+                                    Certificate[] certChain = keyStore.getCertificateChain(CA_ALIAS);
+                                    if (certChain != null && certChain.length > 0) {
+                                        // assume root is last element of chain
+                                        Certificate root = certChain[certChain.length - 1];
+                                        resp.put("caCertificate", Base64.getEncoder().encodeToString(root.getEncoded()));
+                                    }
+
+                                    writer.write(resp.toString() + "\n");
+                                    writer.flush();
+                                } catch (IllegalArgumentException iae) {
+                                    JSONObject err = new JSONObject();
+                                    err.put("response", "ERROR");
+                                    err.put("reason", "invalid base64 CSR or policy: " + iae.getMessage());
+                                    writer.write(err.toString() + "\n");
+                                    writer.flush();
+                                } catch (Exception ex) {
+                                    JSONObject err = new JSONObject();
+                                    err.put("response", "ERROR");
+                                    err.put("reason", "internal error: " + ex.getMessage());
+                                    writer.write(err.toString() + "\n");
+                                    writer.flush();
+                                    ex.printStackTrace();
+                                }
+                            }
+
+                            // (optional) keep old "enroll"/"csr" for CO/HO clients later
+                            case "enroll", "csr" -> {
+                                String entity = jsonRequest.optString("entity", "unknown");
                                 String b64csr = jsonRequest.optString("csr", null);
                                 if (b64csr == null) {
                                     JSONObject err = new JSONObject();
@@ -281,7 +331,6 @@ public class Main {
                                     JSONObject metadata = jsonRequest.optJSONObject("metadata");
                                     X509Certificate signed = signCSR(csr, entity, metadata);
 
-                                    // prepare response with certificate and ca_chain (base64 DER)
                                     JSONObject resp = new JSONObject();
                                     resp.put("status", "OK");
                                     resp.put("certificate", Base64.getEncoder().encodeToString(signed.getEncoded()));
@@ -315,6 +364,7 @@ public class Main {
                                     ex.printStackTrace();
                                 }
                             }
+
                             default -> {
                                 JSONObject responseJson = new JSONObject();
                                 responseJson.put("response", "Unknown method");

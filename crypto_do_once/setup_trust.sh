@@ -75,7 +75,18 @@ keytool -exportcert \
 
 echo "3. Creating server private key in its own keystore..."
 
-# keytool -genkeypair \
+keytool -genkeypair \
+  -alias "$SERVER_ALIAS" \
+  -keyalg RSA \
+  -keysize 4096 \
+  -validity "$VALIDITY_DAYS" \
+  -keystore "$SERVER_KEYSTORE" \
+  -storepass "$SERVER_PASSWORD" \
+  -keypass "$SERVER_PASSWORD" \
+  -dname "CN=${SERVER_CN}, O=${SERVER_ORG}, C=${SERVER_COUNTRY}" \
+  -ext BasicConstraints=ca:true,pathlen:0 \
+  -ext KeyUsage=digitalSignature,keyCertSign,keyEncipherment \
+  -ext ExtendedKeyUsage=serverAuth
 
 ###########################################
 # 4. Generate CSR for server
@@ -83,7 +94,11 @@ echo "3. Creating server private key in its own keystore..."
 
 echo "4. Generating CSR for server..."
 
-# keytool -certreq \
+keytool -certreq \
+  -alias "$SERVER_ALIAS" \
+  -keystore "$SERVER_KEYSTORE" \
+  -storepass "$SERVER_PASSWORD" \
+  -file server.csr
 
 ###########################################
 # 5. Sign server CSR using Root CA
@@ -91,7 +106,16 @@ echo "4. Generating CSR for server..."
 
 echo "5. Signing server certificate with Root CA..."
 
-# keytool -gencert \
+keytool -gencert \
+  -alias "$ROOT_CA_ALIAS" \
+  -keystore "$ROOT_CA_KEYSTORE" \
+  -storepass "$ROOT_CA_PASSWORD" \
+  -infile server.csr \
+  -outfile server.crt \
+  -rfc \
+  -ext BasicConstraints=ca:true,pathlen:0 \
+  -ext KeyUsage=digitalSignature,keyCertSign,keyEncipherment \
+  -ext ExtendedKeyUsage=serverAuth
 
 ###########################################
 # 6. Import Root CA certificate into server keystore
@@ -99,7 +123,12 @@ echo "5. Signing server certificate with Root CA..."
 
 echo "6. Importing Root CA certificate into server keystore..."
 
-# keytool -importcert \
+keytool -importcert \
+  -alias "$ROOT_CA_ALIAS" \
+  -file root_ca.crt \
+  -keystore "$SERVER_KEYSTORE" \
+  -storepass "$SERVER_PASSWORD" \
+  -noprompt
 
 ###########################################
 # 7. Import signed server certificate
@@ -107,7 +136,12 @@ echo "6. Importing Root CA certificate into server keystore..."
 
 echo "7. Importing CA-signed server certificate..."
 
-# keytool -importcert \
+keytool -importcert \
+  -alias "$SERVER_ALIAS" \
+  -file server.crt \
+  -keystore "$SERVER_KEYSTORE" \
+  -storepass "$SERVER_PASSWORD" \
+  -noprompt
 
 ###########################################
 # 8. Create truststores for server + all clients
@@ -115,7 +149,15 @@ echo "7. Importing CA-signed server certificate..."
 
 echo "8. Creating truststores..."
 
-# keytool -importcert \
+for TS in cauth_truststore.p12 sp_truststore.p12 ho_truststore.p12 co_truststore.p12; do
+  rm -f "$TS"
+  keytool -importcert \
+    -alias "$ROOT_CA_ALIAS" \
+    -file root_ca.crt \
+    -keystore "$TS" \
+    -storepass "$TRUSTSTORE_PASSWORD" \
+    -noprompt
+done
 
 ###########################################
 # Cleanup
