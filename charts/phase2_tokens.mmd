@@ -1,0 +1,16 @@
+sequenceDiagram
+    title Phase 2 – Token Collection (CO buys tokens from SP)
+
+    participant CO as CO (Car Owner)
+    participant SP as SP (Service Provider)
+
+    Note over CO,SP: Both have certs from I_CA and trust R_CA
+
+    CO->>SP: TLS handshake (mutual TLS optional)\nAuthenticate CO & SP
+    CO->>SP: RequestTokens(x)\n(JSON: number_of_tokens = x)
+
+    Note over SP: Generate random secret s\nCompute hash chain: H(s), H²(s), ..., H^x(s)\nSign H^x(s) with SP private key
+
+    SP-->>CO: TLS: { tokens: [H(s)...H^x(s)],\n top: H^x(s),\n sig_top: Sig_SP(H^x(s)),\n x }
+
+    Note over CO: Store locally:\n- chain: H(s)...H^x(s)\n- x\n- sig_top\n- identifier for this chain

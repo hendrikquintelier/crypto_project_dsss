@@ -1,0 +1,19 @@
+sequenceDiagram
+    title Phase 3 – Matchmaking (SP connects CO and HO)
+
+    participant HO as HO (Home Owner)
+    participant SP as SP (Service Provider)
+    participant CO as CO (Car Owner)
+
+    Note over HO,SP: HO periodically advertises availability
+
+    HO->>SP: TLS: AdvertiseSpots\n(location, time slots, price_in_tokens,\n HO certificate or ID)
+    SP-->>HO: ACK
+
+    CO->>SP: TLS: SearchSpots\n(desired_location, time_window)
+    SP-->>CO: TLS: ListOffers\n[ {HO_id, location, time, price_tokens, HO_cert}, ... ]
+
+    CO->>CO: User chooses one HO/offer
+
+    CO->>SP: TLS: SelectOffer(HO_id, chosen_timeslot)
+    SP-->>CO: TLS: HO contact details + HO certificate\n(so CO can talk directly to HO in Phase 4)

@@ -1,0 +1,26 @@
+sequenceDiagram
+    title Phase 4 – Reservation + Parking / Payment
+
+    participant CO as CO (Car Owner)
+    participant HO as HO (Home Owner)
+    participant SP as SP (Service Provider)
+
+    %% --- Reservation / Non-repudiation ---
+    CO->>HO: TLS: ReservationRequest\n(location, time, required_tokens, chain_id)
+    HO->>HO: Check availability + conditions
+    HO-->>CO: TLS: ReservationResponse\nOK/NOT_OK + Sig_HO(OK/NOT_OK || full_request_content)
+
+    Note over CO,HO: Signed response is proof HO agreed\n(non-repudiation, integrity)
+
+    %% --- Payment with tokens during parking ---
+    Note over CO: Suppose need to pay y tokens\nfrom a chain of x, where z tokens remain unused
+
+    CO->>HO: TLS: PayTokens\n{ y last chain elements,\n chain_id,\n x, (x - z),\n top = H^x(s),\n sig_top = Sig_SP(H^x(s)) }
+
+    Note over HO: Verify locally:\n1) Recompute H^x(s) from received elements\n2) Verify Sig_SP(H^x(s))\n3) Check hash links between tokens\nIf valid -> accept payment
+
+    HO->>SP: TLS: SubmitTokensForCheck\n(chain_id, newer_hash_value, metadata)
+    SP->>SP: Check double spending\n(using last_seen_hash for this chain_id)
+    SP-->>HO: TLS: OK / REJECT (double spend?)
+
+    Note over SP: Update last_seen_hash for this chain_id\nif tokens are accepted

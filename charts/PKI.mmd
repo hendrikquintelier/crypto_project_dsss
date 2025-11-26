@@ -1,0 +1,17 @@
+graph TD
+
+  subgraph PKI["PKI Trust Chain"]
+    R_CA["R_CA\nRoot CA\n(self-signed)"]
+    I_CA["I_CA\nIntermediate CA\n(online)"]
+  end
+
+  subgraph Entities["System Entities (Services)"]
+    SP["SP\nService Provider"]
+    CO["CO\nCar Owner"]
+    HO["HO\nHome Owner"]
+  end
+
+  R_CA -->|"signs cert of"| I_CA
+  I_CA -->|"issues cert to"| SP
+  I_CA -->|"issues cert to"| CO
+  I_CA -->|"issues cert to"| HO

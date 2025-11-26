@@ -1,0 +1,19 @@
+sequenceDiagram
+    title Phase 1 – Registration (CO, HO, SP with I_CA)
+
+    participant CO as CO (Car Owner)
+    participant HO as HO (Home Owner)
+    participant SP as SP (Service Provider)
+    participant ICA as I_CA (Intermediate CA)
+
+    Note over CO,ICA: Precondition: R_CA cert is pre-installed everywhere
+
+    CO->>ICA: TLS connection (server auth)\n+ send CSR + metadata (ID, license plate, pubkey)
+    ICA-->>CO: Signed cert (CO certificate)
+
+    HO->>ICA: TLS connection (server auth)\n+ send CSR + metadata (ID, location, pubkey)
+    ICA-->>HO: Signed cert (HO certificate)
+
+    SP->>ICA: TLS connection (server auth)\n+ send CSR + public key
+    ICA-->>SP: Signed cert (SP certificate)
+
