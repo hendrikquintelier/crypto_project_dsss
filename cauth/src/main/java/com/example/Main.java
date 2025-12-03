@@ -47,10 +47,11 @@ import org.bouncycastle.pkcs.PKCS10CertificationRequest;
 import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 
 public class Main {
-    // NOTE: after you create intermediate.p12, set KEYSTORE_PATH to "./intermediate.p12"
+    // NOTE: after you create intermediate.p12, set KEYSTORE_PATH to
+    // "./intermediate.p12"
     private static final int PORT = 8443;
-    private static final String KEYSTORE_PATH = "./keystore.p12";
-    private static final String KEYSTORE_PASSWORD = "serverpassword";
+    private static final String KEYSTORE_PATH = "./intermediate.p12";
+    private static final String KEYSTORE_PASSWORD = "interpass";
     private static final String CA_ALIAS = "intermediate"; // alias inside intermediate.p12
     private static final Path SERIAL_FILE = Path.of("./cauth_serial.txt");
     private static final Path ISSUED_LOG = Path.of("./cauth_issued.log");
@@ -111,9 +112,11 @@ public class Main {
         }
     }
 
-    /* -----------------------
-       CSR signing + helpers
-       ----------------------- */
+    /*
+     * -----------------------
+     * CSR signing + helpers
+     * -----------------------
+     */
 
     private static synchronized BigInteger nextSerial() throws IOException {
         // simple persistent serial: stored as decimal in SERIAL_FILE
@@ -137,7 +140,8 @@ public class Main {
         }
     }
 
-    private static X509Certificate signCSR(PKCS10CertificationRequest csr, String entityType, JSONObject metadata) throws Exception {
+    private static X509Certificate signCSR(PKCS10CertificationRequest csr, String entityType, JSONObject metadata)
+            throws Exception {
         // verify CSR signature
         var verifier = new JcaContentVerifierProviderBuilder().setProvider("BC")
                 .build(csr.getSubjectPublicKeyInfo());
@@ -148,7 +152,8 @@ public class Main {
         // policy checks
         // check key type and size
         var keyInfo = csr.getSubjectPublicKeyInfo();
-        java.security.PublicKey pub = new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC").getPublicKey(keyInfo);
+        java.security.PublicKey pub = new org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter().setProvider("BC")
+                .getPublicKey(keyInfo);
         if (pub instanceof RSAPublicKey) {
             int bits = ((RSAPublicKey) pub).getModulus().bitLength();
             if (bits < 2048) {
@@ -160,7 +165,8 @@ public class Main {
 
         // load CA private key and cert
         Key key = keyStore.getKey(CA_ALIAS, KEYSTORE_PASSWORD.toCharArray());
-        if (!(key instanceof PrivateKey)) throw new IllegalStateException("CA key is not a private key");
+        if (!(key instanceof PrivateKey))
+            throw new IllegalStateException("CA key is not a private key");
         PrivateKey caKey = (PrivateKey) key;
         X509Certificate caCert = (X509Certificate) keyStore.getCertificate(CA_ALIAS);
         X500Name issuer = new X500Name(caCert.getSubjectX500Principal().getName());
@@ -175,10 +181,13 @@ public class Main {
 
         // add extensions: basic usage for end-entity
         certBuilder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
-        certBuilder.addExtension(Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
+        certBuilder.addExtension(Extension.keyUsage, true,
+                new KeyUsage(KeyUsage.digitalSignature | KeyUsage.keyEncipherment));
 
-        // Optionally include metadata in SAN or certificate fields (example: put metadata.name as CN if provided)
-        // (For brevity we do not add SAN parsing here; metadata could be added as certificate policy or subject alt name)
+        // Optionally include metadata in SAN or certificate fields (example: put
+        // metadata.name as CN if provided)
+        // (For brevity we do not add SAN parsing here; metadata could be added as
+        // certificate policy or subject alt name)
 
         ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").setProvider("BC").build(caKey);
         X509Certificate signed = new JcaX509CertificateConverter().setProvider("BC")
@@ -193,13 +202,15 @@ public class Main {
         return signed;
     }
 
-    /* -----------------------
-       Client handler: JSON over TLS
-       Endpoints:
-         - {"method":"test"}
-         - {"method":"enroll","entity":"CO","csr":"BASE64-CSR","metadata":{...}}
-         - {"method":"get_ca"} -> returns ca cert chain base64
-       ----------------------- */
+    /*
+     * -----------------------
+     * Client handler: JSON over TLS
+     * Endpoints:
+     * - {"method":"test"}
+     * - {"method":"enroll","entity":"CO","csr":"BASE64-CSR","metadata":{...}}
+     * - {"method":"get_ca"} -> returns ca cert chain base64
+     * -----------------------
+     */
 
     static class ClientHandler implements Runnable {
         private SSLSocket clientSocket;
@@ -249,14 +260,14 @@ public class Main {
                                 } else {
                                     // fallback: single cert
                                     Certificate c = keyStore.getCertificate(CA_ALIAS);
-                                    if (c != null) chain.add(Base64.getEncoder().encodeToString(c.getEncoded()));
+                                    if (c != null)
+                                        chain.add(Base64.getEncoder().encodeToString(c.getEncoded()));
                                 }
                                 resp.put("ca_chain", chain);
                                 writer.write(resp.toString() + "\n");
                                 writer.flush();
                             }
 
-                            
                             case "signCSR" -> {
                                 String b64csr = jsonRequest.optString("csr", null);
                                 if (b64csr == null) {
@@ -279,9 +290,9 @@ public class Main {
                                     X509Certificate signed = signCSR(csr, entity, metadata);
 
                                     // Build response expected by SP:
-                                    //  - "response"
-                                    //  - "certificate"
-                                    //  - "caCertificate" (root)
+                                    // - "response"
+                                    // - "certificate"
+                                    // - "caCertificate" (root)
                                     JSONObject resp = new JSONObject();
                                     resp.put("response", "OK");
                                     resp.put("certificate", Base64.getEncoder().encodeToString(signed.getEncoded()));
@@ -290,7 +301,8 @@ public class Main {
                                     if (certChain != null && certChain.length > 0) {
                                         // assume root is last element of chain
                                         Certificate root = certChain[certChain.length - 1];
-                                        resp.put("caCertificate", Base64.getEncoder().encodeToString(root.getEncoded()));
+                                        resp.put("caCertificate",
+                                                Base64.getEncoder().encodeToString(root.getEncoded()));
                                     }
 
                                     writer.write(resp.toString() + "\n");
@@ -343,7 +355,8 @@ public class Main {
                                         }
                                     } else {
                                         Certificate c = keyStore.getCertificate(CA_ALIAS);
-                                        if (c != null) chain.add(Base64.getEncoder().encodeToString(c.getEncoded()));
+                                        if (c != null)
+                                            chain.add(Base64.getEncoder().encodeToString(c.getEncoded()));
                                     }
                                     resp.put("ca_chain", chain);
 
@@ -376,7 +389,8 @@ public class Main {
                         jsonBuffer.setLength(0); // reset buffer for next JSON
                         jsonAttempts = 0;
                     } catch (JSONException je) {
-                        // incomplete or invalid JSON - defend against unbounded growth and abusive clients
+                        // incomplete or invalid JSON - defend against unbounded growth and abusive
+                        // clients
                         jsonAttempts++;
                         if (jsonBuffer.length() > MAX_BUFFER || jsonAttempts > MAX_ATTEMPTS) {
                             JSONObject err = new JSONObject();
@@ -384,7 +398,8 @@ public class Main {
                             err.put("reason", "invalid or too large JSON request");
                             writer.write(err.toString() + "\n");
                             writer.flush();
-                            System.err.println("Closing connection due to invalid JSON from " + clientSocket.getRemoteSocketAddress());
+                            System.err.println("Closing connection due to invalid JSON from "
+                                    + clientSocket.getRemoteSocketAddress());
                             break;
                         }
                         // otherwise keep reading more lines
